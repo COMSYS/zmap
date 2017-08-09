@@ -161,6 +161,11 @@ configure_file(zopt.ggo.in ${CMAKE_BINARY_DIR}/src/zopt.ggo @ONLY)
 configure_file(ztopt.ggo.in ${CMAKE_BINARY_DIR}/src/ztopt.ggo @ONLY)
 # Additional ggo.in's should be added here and CMakeVersion.txt
 
+configure_file(zblacklist.1.ronn ${CMAKE_BINARY_DIR}/src/zblacklist.1.ronn @ONLY)
+configure_file(ziterate.1.ronn ${CMAKE_BINARY_DIR}/src/ziterate.1.ronn @ONLY)
+configure_file(zmap.1.ronn ${CMAKE_BINARY_DIR}/src/zmap.1.ronn @ONLY)
+configure_file(ztee.1.ronn ${CMAKE_BINARY_DIR}/src/ztee.1.ronn @ONLY)
+
 # This sets a *build* time dependency that checks git
 if("${ZMAP_VERSION}" STREQUAL "DEVELOPMENT")
     add_custom_target(git_versioning ALL

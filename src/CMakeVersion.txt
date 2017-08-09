@@ -13,3 +13,8 @@ configure_file("${ORIG_SRC_DIR}/src/zbopt.ggo.in" "${CMAKE_BINARY_DIR}/zbopt.ggo
 configure_file("${ORIG_SRC_DIR}/src/zitopt.ggo.in" "${CMAKE_BINARY_DIR}/zitopt.ggo" @ONLY)
 configure_file("${ORIG_SRC_DIR}/src/zopt.ggo.in" "${CMAKE_BINARY_DIR}/zopt.ggo" @ONLY)
 configure_file("${ORIG_SRC_DIR}/src/ztopt.ggo.in" "${CMAKE_BINARY_DIR}/ztopt.ggo" @ONLY)
+
+configure_file("${ORIG_SRC_DIR}/src/zblacklist.1.ronn" "${CMAKE_BINARY_DIR}/zblacklist.1.ronn" @ONLY)
+configure_file("${ORIG_SRC_DIR}/src/ziterate.1.ronn" "${CMAKE_BINARY_DIR}/ziterate.1.ronn" @ONLY)
+configure_file("${ORIG_SRC_DIR}/src/zmap.1.ronn" "${CMAKE_BINARY_DIR}/zmap.1.ronn" @ONLY)
+configure_file("${ORIG_SRC_DIR}/src/ztee.1.ronn" "${CMAKE_BINARY_DIR}/ztee.1.ronn" @ONLY)
