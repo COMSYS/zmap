@@ -18,10 +18,13 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+#include <inttypes.h>
 
 #include "iterator.h"
 #include "recv.h"
 #include "state.h"
+#include "probe_modules/probe_modules.h"
+#include "ringbuffer.h"
 
 #include "../lib/lockfd.h"
 #include "../lib/logger.h"
@@ -31,13 +34,19 @@
 #define UPDATE_INTERVAL 1 // seconds
 #define NUMBER_STR_LEN 20
 #define WARMUP_PERIOD 5
-#define MIN_HITRATE_TIME_WINDOW 5 // seconds
+#define MIN_HITRATE_TIME_WINDOW 5 //seconds
+#define MAX_NUM_RINGS 20
+
+#ifndef MIN
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
+#endif
 
 // internal monitor status that is used to track deltas
 typedef struct internal_scan_status {
 	double last_now;
 	uint32_t last_sent;
-	uint32_t last_tried_sent;
+	uint64_t last_packets_sent;
+        uint32_t last_tried_sent;
 	uint32_t last_send_failures;
 	uint32_t last_recv_net_success;
 	uint32_t last_recv_app_success;
@@ -49,12 +58,18 @@ typedef struct internal_scan_status {
 // exportable status information that can be printed to screen
 typedef struct export_scan_status {
 	uint32_t total_sent;
+	uint64_t total_packets_sent;
 	uint32_t total_tried_sent;
 	uint32_t recv_success_unique;
 	uint32_t app_recv_success_unique;
 	uint32_t total_recv;
 	uint32_t complete;
 	uint32_t send_threads;
+	uint16_t num_rings;
+	
+	float pcap_buf_fill_level;
+	
+	float ring_fill_level[MAX_NUM_RINGS];
 	double percent_complete;
 
 	double hitrate;		 // network, e.g. SYN-ACK vs RST
@@ -143,11 +158,22 @@ static void update_pcap_stats(pthread_mutex_t *recv_ready_mutex) {
 static void export_stats(int_status_t *intrnl, export_status_t *exp,
 		iterator_t *it) {
 	uint32_t total_sent = iterator_get_sent(it);
-	uint32_t total_tried_sent = iterator_get_tried_sent(it);
+	uint32_t total_packets_sent = (uint32_t)iterator_get_packets_sent(it);
+        uint32_t total_tried_sent = iterator_get_tried_sent(it);
 	uint32_t total_fail = iterator_get_fail(it);
 	uint32_t total_recv = zrecv.pcap_recv;
 	uint32_t recv_success = zrecv.success_unique;
 	uint32_t app_success = zrecv.app_success_unique;
+	uint16_t num_rings = zconf.senders;
+	exp->num_rings = num_rings;
+	for (int i = 0; i < MIN(num_rings, MAX_NUM_RINGS); i++) {
+		ringbuffer_lock(&all_rings[i]);
+		exp->ring_fill_level[i] = ringbuffer_fill_level(&all_rings[i]);
+		ringbuffer_unlock(&all_rings[i]);
+	}
+	
+	exp->pcap_buf_fill_level = (total_recv - zrecv.pcap_drop - zrecv.packet_counter)/(float)(PCAP_BUFFER_SIZE/zconf.probe_module->pcap_snaplen);
+	
 	double cur_time = now();
 	double age = cur_time - zsend.start; // time of entire scan
 	// time since the last time we updated
@@ -215,7 +241,8 @@ static void export_stats(int_status_t *intrnl, export_status_t *exp,
 	}
 	// export other pre-calculated values
 	exp->total_sent = total_sent;
-	exp->total_tried_sent = total_tried_sent;
+	exp->total_packets_sent = total_packets_sent;
+        exp->total_tried_sent = total_tried_sent;
 	exp->percent_complete = 100. * age / (age + remaining_secs);
 	exp->recv_success_unique = recv_success;
 	exp->app_recv_success_unique = app_success;
@@ -243,6 +270,7 @@ static void export_stats(int_status_t *intrnl, export_status_t *exp,
 	// Update internal stats
 	intrnl->last_now = cur_time;
 	intrnl->last_sent = exp->total_sent;
+	intrnl->last_packets_sent = exp->total_packets_sent;
 	intrnl->last_recv_net_success = exp->recv_success_unique;
 	intrnl->last_recv_app_success = exp->app_recv_success_unique;
 	intrnl->last_pcap_drop = exp->pcap_drop_total;
@@ -265,54 +293,88 @@ static void log_drop_warnings(export_status_t *exp) {
 
 static void onscreen_appsuccess(export_status_t *exp) {
 	// this when probe module handles application-level success rates
+	char buf[MAX_NUM_RINGS*5+5];
+	int off = 0;
+	for (int i = 0; i < exp->num_rings; i++) {
+		off += snprintf(buf+off, sizeof(buf)-off, "%f%% ", (exp->ring_fill_level[i]*100));
+	}
 	if (!exp->complete) {
-		fprintf(stderr, "%5s %0.0f%%%s; sent: %u %sp/s (%sp/s avg); "
+		fprintf(stderr, "%5s %0.0f%%%s; sent: %"PRIu64" (%u) %sp/s (%sp/s avg); "
 						"recv: %u %sp/s (%sp/s avg); "
 						"app success: %u %sp/s (%sp/s avg); "
 						"drops: %sp/s (%sp/s avg); "
 						"hitrate: %0.2f%% "
-						"app hitrate: %0.2f%%\n",
+						"app hitrate: %0.2f%%\n"
+						"ring fill levels %s "
+						"pcap buf fill level %d%%\n"
+						"Counter: %llu Total: %d\n",
 						exp->time_past_str, exp->percent_complete, exp->time_remaining_str,
-						exp->total_sent, exp->send_rate_str, exp->send_rate_avg_str,
+						exp->total_packets_sent, exp->total_sent, exp->send_rate_str, exp->send_rate_avg_str,
 						exp->recv_success_unique, exp->recv_rate_str, exp->recv_avg_str,
 						exp->app_recv_success_unique, exp->app_success_rate_str,
 						exp->app_success_avg_str, exp->pcap_drop_last_str,
-						exp->pcap_drop_avg_str, exp->hitrate, exp->app_hitrate);
+						exp->pcap_drop_avg_str, exp->hitrate, exp->app_hitrate, buf,
+				(int)(exp->pcap_buf_fill_level*100),
+				zrecv.packet_counter,
+				zrecv.pcap_recv);
 	} else {
-		fprintf(stderr, "%5s %0.0f%%%s; sent: %u done (%sp/s avg); "
+		fprintf(stderr, "%5s %0.0f%%%s; sent: %"PRIu64" (%u) done (%sp/s avg); "
 						"recv: %u %sp/s (%sp/s avg); "
 						"app success: %u %sp/s (%sp/s avg); "
 						"drops: %sp/s (%sp/s avg); "
 						"hitrate: %0.2f%% "
-						"app hitrate: %0.2f%%\n",
+						"app hitrate: %0.2f%%\n"
+                        "ring fill levels %s "
+                        "pcap buf fill level %d%%\n"
+                        "Counter: %llu Total: %d\n",
 						exp->time_past_str, exp->percent_complete, exp->time_remaining_str,
-						exp->total_sent, exp->send_rate_avg_str, exp->recv_success_unique,
+						exp->total_packets_sent, exp->total_sent, exp->send_rate_avg_str, exp->recv_success_unique,
 						exp->recv_rate_str, exp->recv_avg_str, exp->app_recv_success_unique,
 						exp->app_success_rate_str, exp->app_success_avg_str,
 						exp->pcap_drop_last_str, exp->pcap_drop_avg_str, exp->hitrate,
-						exp->app_hitrate);
+						exp->app_hitrate,buf,
+				(int)(exp->pcap_buf_fill_level*100),
+				zrecv.packet_counter,
+				zrecv.pcap_recv);
 	}
 }
 
 static void onscreen_generic(export_status_t *exp) {
+	char buf[MAX_NUM_RINGS*5+5];
+	int off = 0;
+	for (int i = 0; i < exp->num_rings; i++) {
+		off += snprintf(buf+off, sizeof(buf)-off, "%f%% ", (exp->ring_fill_level[i]*100));
+	}
 	if (!exp->complete) {
-		fprintf(stderr, "%5s %0.0f%%%s; send: %u %sp/s (%sp/s avg); "
+		fprintf(stderr, "%5s %0.0f%%%s; send: %"PRIu64" (%u) %sp/s (%sp/s avg); "
 						"recv: %u %sp/s (%sp/s avg); "
 						"drops: %sp/s (%sp/s avg); "
-						"hitrate: %0.2f%%\n",
+						"hitrate: %0.2f%%\n"
+                        "ring fill levels %s "
+                        "pcap buf fill level %d%%\n"
+                        "Counter: %llu Total: %d\n",
 						exp->time_past_str, exp->percent_complete, exp->time_remaining_str,
-						exp->total_sent, exp->send_rate_str, exp->send_rate_avg_str,
+						exp->total_packets_sent, exp->total_sent, exp->send_rate_str, exp->send_rate_avg_str,
 						exp->recv_success_unique, exp->recv_rate_str, exp->recv_avg_str,
-						exp->pcap_drop_last_str, exp->pcap_drop_avg_str, exp->hitrate);
+						exp->pcap_drop_last_str, exp->pcap_drop_avg_str, exp->hitrate, buf,
+				(int)(exp->pcap_buf_fill_level*100),
+				zrecv.packet_counter,
+				zrecv.pcap_recv);
 	} else {
-		fprintf(stderr, "%5s %0.0f%%%s; send: %u done (%sp/s avg); "
+		fprintf(stderr, "%5s %0.0f%%%s; send: %"PRIu64" (%u) done (%sp/s avg); "
 										"recv: %u %sp/s (%sp/s avg); "
 										"drops: %sp/s (%sp/s avg); "
-										"hitrate: %0.2f%%\n",
+										"hitrate: %0.2f%%\n"
+                                        "ring fill levels %s "
+                                        "pcap buf fill level %d%%\n"
+                                        "Counter: %llu Total: %d\n",
 						exp->time_past_str, exp->percent_complete, exp->time_remaining_str,
-						exp->total_sent, exp->send_rate_avg_str, exp->recv_success_unique,
+						exp->total_packets_sent, exp->total_sent, exp->send_rate_avg_str, exp->recv_success_unique,
 						exp->recv_rate_str, exp->recv_avg_str, exp->pcap_drop_last_str,
-						exp->pcap_drop_avg_str, exp->hitrate);
+						exp->pcap_drop_avg_str, exp->hitrate, buf,
+				(int)(exp->pcap_buf_fill_level*100),
+				zrecv.packet_counter,
+				zrecv.pcap_recv);
 	}
 	fflush(stderr);
 }
@@ -416,4 +478,6 @@ void monitor_run(iterator_t *it, pthread_mutex_t *lock) {
 		fflush(f);
 		fclose(f);
 	}
+	xfree(internal_status);
+	xfree(export_status);
 }

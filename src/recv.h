@@ -10,8 +10,19 @@
 #define ZMAP_RECV_H
 
 #include <pthread.h>
+#include "ringbuffer.h"
+#define PCAP_BUFFER_SIZE (20*1024*1024)
+
+extern pthread_mutex_t recv_mutex;
+
+typedef struct recv_arg {
+	uint32_t cpu;
+	ringbuffer_t* ring;
+} recv_arg_t;
 
 int recv_update_stats(void);
-int recv_run(pthread_mutex_t *recv_ready_mutex);
+int recv_run(pthread_mutex_t *recv_ready_mutex, recv_arg_t* thread_args);
+void recv_init_shared();
+void recv_cleanup_shared();
 
 #endif /* ZMP_RECV_H */

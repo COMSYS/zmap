@@ -34,7 +34,7 @@ set(PROBE_MODULE_SOURCES
     probe_modules/module_icmp_echo_time.c
     probe_modules/module_tcp_synscan.c
     probe_modules/module_tcp_synackscan.c
-	#probe_modules/module_tcp_cisco_backdoor.c
+#probe_modules/module_tcp_cisco_backdoor.c
     probe_modules/module_udp.c
     probe_modules/packet.c
     probe_modules/probe_modules.c
@@ -42,6 +42,14 @@ set(PROBE_MODULE_SOURCES
     probe_modules/module_upnp.c
     probe_modules/module_dns.c
     probe_modules/module_bacnet.c
+    probe_modules/initcwnd_common.c
+    probe_modules/module_tcp_initcwnd_ssl.c
+    probe_modules/module_tcp_initcwnd_http10.c
+    probe_modules/module_icmp_mtu_discovery.c
+    probe_modules/ipdata.c
+    probe_modules/state_machine.c
+    probe_modules/tcp_connection.c
+    probe_modules/tls.c
 )
 
 set(SOURCES
@@ -54,6 +62,7 @@ set(SOURCES
     iterator.c
     monitor.c
     recv.c
+    ringbuffer.c
     send.c
     shard.c
     socket.c
@@ -80,6 +89,7 @@ set(ZTESTSOURCES
     get_gateway.c
     iterator.c
     monitor.c
+	ringbuffer.c
     recv.c
     send.c
     shard.c

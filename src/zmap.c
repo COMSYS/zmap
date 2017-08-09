@@ -17,7 +17,7 @@
 #include <errno.h>
 #include <pwd.h>
 #include <time.h>
-
+#include <sys/param.h>
 #include <pcap/pcap.h>
 #include <json.h>
 
@@ -40,9 +40,13 @@
 #include "get_gateway.h"
 #include "filter.h"
 #include "summary.h"
+#include "ringbuffer.h"
+#include "iterator.h"
 
 #include "output_modules/output_modules.h"
 #include "probe_modules/probe_modules.h"
+#include "probe_modules/packet.h"
+
 
 #ifdef PFRING
 #include <pfring_zc.h>
@@ -56,15 +60,6 @@ static int32_t distrib_func(pfring_zc_pkt_buff *pkt, pfring_zc_queue *in_queue, 
 
 pthread_mutex_t recv_ready_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-typedef struct send_arg {
-	uint32_t cpu;
-	sock_t sock;
-	shard_t *shard;
-} send_arg_t;
-
-typedef struct recv_arg {
-	uint32_t cpu;
-} recv_arg_t;
 
 typedef struct mon_start_arg {
 	uint32_t cpu;
@@ -84,8 +79,7 @@ static void* start_send(void *arg)
 	send_arg_t *s = (send_arg_t *) arg;
 	log_debug("zmap", "Pinning a send thread to core %u", s->cpu);
 	set_cpu(s->cpu);
-	send_run(s->sock, s->shard);
-	free(s);
+	send_run(s->sock, s->shard, s);
 	return NULL;
 }
 
@@ -94,7 +88,7 @@ static void* start_recv(void *arg)
 	recv_arg_t *r = (recv_arg_t *) arg;
 	log_debug("zmap", "Pinning receive thread to core %u", r->cpu);
 	set_cpu(r->cpu);
-	recv_run(&recv_ready_mutex);
+	recv_run(&recv_ready_mutex, arg);
 	return NULL;
 }
 
@@ -166,16 +160,40 @@ static void start_zmap(void)
 	if (zconf.output_module && zconf.output_module->start) {
 		zconf.output_module->start(&zconf, &zsend, &zrecv);
 	}
+    #define receivers (1)
 
+	// initialize ringbuffers if probe module has state
+	ringbuffer_t* ring = NULL;
+    //if (zconf.probe_module->state_aware) {
+		// we have at most senders many receivers
+		int num_rings = zconf.senders;
+		ring = xmalloc(num_rings * sizeof(ringbuffer_t));
+		for (int i = 0; i < num_rings; i++) {
+			// have 4 times the buffer per second?! split over the receivers
+			log_info("ringbuffer rate", "rate %u receivers %u", zconf.rate, receivers);
+			// add ethernet header for destination and source to all packets
+			u_char buf[MAX_PACKET_SIZE];
+			uint32_t size = zconf.probe_module->thread_initialize(buf, zconf.hw_mac, zconf.gw_mac, zconf.target_port, NULL);
+			//MAX(zconf.rate/zconf.receivers, 1 << 10)
+			ringbuffer_create(&ring[i], 400000, zconf.probe_module->ringbuffer_packet_len, buf, size);
+		}
+		all_rings = ring;
+    //}
+	
+	
 	// start threads
 	uint32_t cpu = 0;
-	pthread_t *tsend, trecv, tmon;
-	int r;
-	if (!zconf.dryrun) {
-		recv_arg_t *recv_arg = xmalloc(sizeof(recv_arg_t));
-		recv_arg->cpu = zconf.pin_cores[cpu % zconf.pin_cores_len];
+	pthread_t *tsend, *trecv, tmon;
+
+	trecv = xmalloc(receivers * sizeof(pthread_t));
+	recv_arg_t *recv_args = xmalloc(receivers * sizeof(recv_arg_t));
+	recv_init_shared();
+	for (uint8_t i = 0; i < receivers; i++) {
+
+		recv_args[i].cpu = zconf.pin_cores[cpu % zconf.pin_cores_len];
+		recv_args[i].ring = ring == NULL ? NULL : &ring[i];
 		cpu += 1;
-		r = pthread_create(&trecv, NULL, start_recv, recv_arg);
+		int r = pthread_create(&trecv[i], NULL, start_recv, &recv_args[i]);
 		if (r != 0) {
 			log_fatal("zmap", "unable to create recv thread");
 		}
@@ -187,7 +205,9 @@ static void start_zmap(void)
 			}
 			pthread_mutex_unlock(&recv_ready_mutex);
 		}
+		zconf.recv_ready = 0;
 	}
+	zconf.recv_ready = 1;
 #ifdef PFRING
 	pfring_zc_worker *zw = pfring_zc_run_balancer(zconf.pf.queues,
 		&zconf.pf.send,
@@ -203,6 +223,7 @@ static void start_zmap(void)
 	cpu += 1;
 #endif
 	tsend = xmalloc(zconf.senders * sizeof(pthread_t));
+	send_arg_t *send_args = xmalloc(zconf.senders * sizeof(send_arg_t));
 	for (uint8_t i = 0; i < zconf.senders; i++) {
 		sock_t sock;
 		if (zconf.dryrun) {
@@ -210,13 +231,13 @@ static void start_zmap(void)
 		} else {
 			sock = get_socket(i);
 		}
-		send_arg_t *arg = xmalloc(sizeof(send_arg_t));
 
-		arg->sock = sock;
-		arg->shard = get_shard(it, i);
-		arg->cpu = zconf.pin_cores[cpu % zconf.pin_cores_len];
+		send_args[i].sock = sock;
+		send_args[i].shard = get_shard(it, i);
+		send_args[i].cpu = zconf.pin_cores[cpu % zconf.pin_cores_len];
+		send_args[i].ring = ring == NULL ? NULL : &ring[i];
 		cpu += 1;
-		int r = pthread_create(&tsend[i], NULL, start_send, arg);
+		int r = pthread_create(&tsend[i], NULL, start_send, &send_args[i]);
 		if (r != 0) {
 			log_fatal("zmap", "unable to create send thread");
 			exit(EXIT_FAILURE);
@@ -224,12 +245,12 @@ static void start_zmap(void)
 	}
 	log_debug("zmap", "%d sender threads spawned", zconf.senders);
 
-	if (!zconf.dryrun) {
-		monitor_init();
-		mon_start_arg_t *mon_arg = xmalloc(sizeof(mon_start_arg_t));
-		mon_arg->it = it;
-		mon_arg->recv_ready_mutex = &recv_ready_mutex;
-		mon_arg->cpu = zconf.pin_cores[cpu % zconf.pin_cores_len];
+	monitor_init();
+	mon_start_arg_t *mon_arg = xmalloc(sizeof(mon_start_arg_t));
+	mon_arg->it = it;
+	mon_arg->recv_ready_mutex = &recv_ready_mutex;
+	mon_arg->cpu = zconf.pin_cores[cpu % zconf.pin_cores_len];
+	{
 		int r = pthread_create(&tmon, NULL, start_mon, mon_arg);
 		if (r != 0) {
 			log_fatal("zmap", "unable to create monitor thread");
@@ -250,24 +271,37 @@ static void start_zmap(void)
 		}
 	}
 	log_debug("zmap", "senders finished");
+	xfree(tsend);
+	xfree(send_args);
 #ifdef PFRING
 	pfring_zc_kill_worker(zw);
 	pfring_zc_sync_queue(zconf.pf.send, tx_only);
 	log_debug("zmap", "send queue flushed");
 #endif
-	// no receiving or monitoring thread is started in dry run mode
-	if (!zconf.dryrun) {
-		r = pthread_join(trecv, NULL);
+	for (uint8_t i = 0; i < receivers; i++) {
+		int r = pthread_join(trecv[i], NULL);
 		if (r != 0) {
 			log_fatal("zmap", "unable to join recv thread");
 			exit(EXIT_FAILURE);
 		}
-		if (!zconf.quiet || zconf.status_updates_file) {
-			pthread_join(tmon, NULL);
-			if (r != 0) {
-				log_fatal("zmap", "unable to join monitor thread");
-				exit(EXIT_FAILURE);
-			}
+	}
+	xfree(trecv);
+	xfree(recv_args);
+	xfree(it->thread_shards);
+	xfree(it->complete);
+	xfree(it);
+	if (!zconf.dryrun) {
+		pthread_mutex_lock(&recv_ready_mutex);
+		recv_cleanup_shared();
+		pthread_mutex_unlock(&recv_ready_mutex);
+	}
+	zrecv.complete = 1;
+
+	if (!zconf.quiet || zconf.status_updates_file) {
+		int r = pthread_join(tmon, NULL);
+		if (r != 0) {
+			log_fatal("zmap", "unable to join monitor thread");
+			exit(EXIT_FAILURE);
 		}
 	}
 
@@ -661,8 +695,9 @@ int main(int argc, char *argv[])
 		zconf.hw_mac_set = 1;
 	}
 	// Check for a random seed
+
 	if (args.seed_given) {
-		zconf.seed = args.seed_arg;
+		zconf.seed = strtoul(args.seed_orig, NULL,10);
 		zconf.seed_provided = 1;
 	} else {
 		// generate a seed randomly
@@ -673,6 +708,8 @@ int main(int argc, char *argv[])
 		zconf.seed_provided = 0;
 	}
 	zconf.aes = aesrand_init_from_seed(zconf.seed);
+
+    log_info("zmap", "seed is %lu", zconf.seed);
 
 	// Set up sharding
 	zconf.shard_num = 0;
@@ -771,6 +808,7 @@ int main(int argc, char *argv[])
 		log_warn("zmap", "too few targets relative to senders, dropping to one sender");
 		zconf.senders = 1;
 	}
+		
 #else
 	zconf.senders = args.sender_threads_arg;
 #endif
@@ -858,6 +896,28 @@ int main(int argc, char *argv[])
 #endif
 
 	// resume scan if requested
+	
+	if (args.resume_scan_from_given) {
+		// we can only resume a scan if there's a single thread.
+		// and we know the correct seed.
+		if (!zconf.seed_provided) {
+			log_fatal("zmap", "a scan can only be resumed from a seed");
+		}
+		if (zconf.senders > 1) {
+			log_fatal("zmap", "resume can only be used if BOTH the original "
+					  "and current scan had a single thread.");
+		}
+		// figure out blacklist index if the last seen IP address
+		struct in_addr addr;
+		uint32_t resume_from_ip;
+		if (!inet_aton(args.resume_scan_from_arg, &addr)) {
+			// inet_aton() returns nonzero if the address is valid, zero if not.
+			log_fatal("zmap", "invalid IP provided for --resume-scan-from");
+		}
+		resume_from_ip = addr.s_addr;
+        zconf.resume_idx = blacklist_ip_to_index(resume_from_ip);
+        zconf.resume_ip = addr.s_addr;
+	}
 
 	start_zmap();
 
@@ -865,5 +925,7 @@ int main(int argc, char *argv[])
 
 	cmdline_parser_free(&args);
 	free(params);
+	
+	blacklist_release();
 	return EXIT_SUCCESS;
 }

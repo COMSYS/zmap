@@ -63,12 +63,15 @@ struct state_conf {
 	int cooldown_secs;
 	// number of sending threads
 	uint8_t senders;
+	
 	uint32_t pin_cores_len;
 	uint32_t *pin_cores;
 	// should use CLI provided randomization seed instead of generating
 	// a random seed.
 	int seed_provided;
 	uint64_t seed;
+	uint32_t resume_idx;
+    uint32_t resume_ip;
 	aesrand_t *aes;
 	// generator of the cyclic multiplicative group that is utilized for
 	// address generation
@@ -188,6 +191,8 @@ struct state_recv {
 	uint32_t pcap_drop;
 	// number of packets dropped by the network interface or its driver.
 	uint32_t pcap_ifdrop;
+	
+	unsigned long long packet_counter;
 
 };
 extern struct state_recv zrecv;

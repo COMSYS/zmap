@@ -33,7 +33,7 @@ void recv_init()
 	}
 }
 
-void recv_cleanup()
+void recv_cleanup_shared()
 {
 	if (!pf_recv) {
 		return;

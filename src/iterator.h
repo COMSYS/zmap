@@ -19,11 +19,21 @@
 
 typedef struct iterator iterator_t;
 
+struct iterator {
+	cycle_t cycle;
+	uint8_t num_threads;
+	shard_t *thread_shards;
+	uint8_t *complete;
+	pthread_mutex_t mutex;
+	uint32_t curr_threads;
+};
+
 iterator_t* iterator_init(uint8_t num_threads, uint8_t shard,
-			  uint8_t num_shards);
+			  uint8_t num_shards, uint32_t resume_idx);
 
 uint32_t iterator_get_sent(iterator_t *it);
 uint32_t iterator_get_tried_sent(iterator_t *it);
+uint32_t iterator_get_packets_sent(iterator_t *it);
 uint32_t iterator_get_fail(iterator_t *it);
 
 uint32_t iterator_get_curr_send_threads(iterator_t *it);

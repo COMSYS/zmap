@@ -32,6 +32,7 @@ struct state_conf zconf = {
 	.packet_streams = 1,
 	.seed_provided = 0,
 	.seed = 0,
+	.resume_idx = 0,
 	.output_module = NULL,
 	.output_args = NULL,
 	.probe_module = NULL,
@@ -62,7 +63,8 @@ struct state_conf zconf = {
 	.metadata_filename = NULL,
 	.notes = NULL,
 	.custom_metadata_str = NULL,
-	.recv_ready = 0
+	.recv_ready = 0,
+    .resume_ip = 0
 };
 
 // global sender stats and defaults
@@ -96,4 +98,5 @@ struct state_recv zrecv = {
 	.pcap_recv = 0,
 	.pcap_drop = 0,
 	.pcap_ifdrop = 0,
+	.packet_counter = 0
 };

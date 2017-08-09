@@ -84,17 +84,36 @@ static __attribute__((unused)) inline int check_dst_port(uint16_t port,
 					|| port < zconf.source_port_first) {
 		return 0;
 	}
-	int32_t to_validate = port - zconf.source_port_first;
+	
+	int max_dist = num_ports/zconf.packet_streams;
+	
+	for (int i = 0; i < zconf.packet_streams; i++) {
+		int32_t poss_port = zconf.source_port_first + ((validation[1] + i * max_dist) % num_ports);
+        //printf("Port is %d, testing for %d\n", port, poss_port);
+		if (port == poss_port) {
+			// return 1;
+            // we return the one-based probe num here to read this in the validation
+            return i + 1;
+		}
+	}
+	return 0;
+/*	int32_t to_validate = port - zconf.source_port_first;
 	int32_t min = validation[1] % num_ports;
 	int32_t max = (validation[1] + zconf.packet_streams - 1) % num_ports;
 
 	return (((max - min) % num_ports) >= ((to_validate - min) % num_ports));
+ */
 }
 
 static __attribute__((unused)) inline uint16_t get_src_port(int num_ports,
 				int probe_num, uint32_t *validation)
 {
-	return zconf.source_port_first + ((validation[1] + probe_num) % num_ports);
+	int max_dist = num_ports/zconf.packet_streams;
+	
+	
+    uint16_t port =  zconf.source_port_first + ((validation[1] + probe_num * max_dist) % num_ports);
+    //printf("Setting port to %d\n", port);
+	return port;
 }
 
 // Note: caller must free return value

@@ -11,8 +11,16 @@
 
 #include "iterator.h"
 #include "socket.h"
+#include "ringbuffer.h"
+
+typedef struct send_arg {
+	uint32_t cpu;
+	sock_t sock;
+	shard_t *shard;
+	ringbuffer_t* ring;
+} send_arg_t;
 
 iterator_t* send_init(void);
-int send_run(sock_t, shard_t*);
+int send_run(sock_t, shard_t*, send_arg_t* thread_args);
 
 #endif //SEND_H

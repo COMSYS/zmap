@@ -19,6 +19,7 @@ typedef struct shard {
 	struct shard_state {
 		uint32_t sent;
 		uint32_t tried_sent;
+		uint64_t p_sent;
 		uint32_t blacklisted;
 		uint32_t whitelisted;
 		uint32_t failures;
@@ -45,7 +46,8 @@ void shard_init(shard_t* shard,
 		uint8_t num_subshard,
 		const cycle_t* cycle,
 		shard_complete_cb cb,
-		void *arg);
+		void *arg,
+		uint32_t resume_idx);
 
 uint32_t shard_get_cur_ip(shard_t *shard);
 uint32_t shard_get_next_ip(shard_t *shard);

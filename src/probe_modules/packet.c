@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include <arpa/inet.h>
 
 #include "../../lib/includes.h"
 #include "../../lib/xalloc.h"
@@ -130,9 +131,8 @@ char *make_ip_str(uint32_t ip)
 {
 	struct in_addr t;
 	t.s_addr = ip;
-	const char *temp = inet_ntoa(t);
-	char *retv = xmalloc(strlen(temp)+1);
-	strcpy(retv, temp);
+    char *retv = xmalloc(INET_ADDRSTRLEN);
+    inet_ntop(AF_INET, &ip, retv, INET_ADDRSTRLEN);
 	return retv;
 }
 

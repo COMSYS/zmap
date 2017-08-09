@@ -1,5 +1,7 @@
 #include "../state.h"
 #include "../fieldset.h"
+#include "../ringbuffer.h"
+#include "state_machine.h"
 
 #ifndef PROBE_MODULES_H
 #define PROBE_MODULES_H
@@ -29,11 +31,21 @@ typedef int (*probe_validate_packet_cb)(const struct ip *ip_hdr,
 typedef void (*probe_classify_packet_cb)(const u_char* packetbuf,
 		uint32_t len, fieldset_t*, uint32_t *validation);
 
+typedef int (*probe_classify_packet_aware_cb)(const u_char* packetbuf,
+uint32_t len, fieldset_t*, uint32_t *validation, ringbuffer_t* ring);
+
+
+typedef void (*probe_process_timeout_cb)(struct StateData* data);
+
+
+typedef int (*probe_pcap_filter_func)(char* pcap_filter, size_t max_len);
+
 typedef struct probe_module {
 	const char *name;
 	size_t packet_length;
 	const char *pcap_filter;
 	size_t pcap_snaplen;
+	probe_pcap_filter_func pcap_filter_func;
 
 	// Should ZMap complain if the user hasn't specified valid
 	// source and target port numbers?
@@ -45,7 +57,11 @@ typedef struct probe_module {
 	probe_print_packet_cb print_packet;
 	probe_validate_packet_cb validate_packet;
 	probe_classify_packet_cb process_packet;
+	probe_classify_packet_aware_cb process_packet_aware;
+	probe_process_timeout_cb process_timeout;
 	probe_close_cb close;
+	int state_aware;
+	int ringbuffer_packet_len;
     int output_type;
 	fielddef_t *fields;
 	int numfields;
@@ -63,6 +79,7 @@ extern int ip_fields_len;
 extern int sys_fields_len;
 extern fielddef_t ip_fields[];
 extern fielddef_t sys_fields[];
+extern pthread_mutex_t statetable_lock;
 
 #endif // HEADER_PROBE_MODULES_H
 

@@ -23,14 +23,6 @@
 #include "shard.h"
 #include "state.h"
 
-struct iterator {
-	cycle_t cycle;
-	uint8_t num_threads;
-	shard_t *thread_shards;
-	uint8_t *complete;
-	pthread_mutex_t mutex;
-	uint32_t curr_threads;
-};
 
 void shard_complete(uint8_t thread_id, void *arg)
 {
@@ -58,7 +50,7 @@ void shard_complete(uint8_t thread_id, void *arg)
 }
 
 iterator_t* iterator_init(uint8_t num_threads, uint8_t shard,
-			  uint8_t num_shards)
+			  uint8_t num_shards, uint32_t resume_idx)
 {
 	uint64_t num_addrs = blacklist_count_allowed();
 	iterator_t *it = xmalloc(sizeof(struct iterator));
@@ -82,8 +74,8 @@ iterator_t* iterator_init(uint8_t num_threads, uint8_t shard,
 			   num_threads,
 			   &it->cycle,
 			   shard_complete,
-			   it
-			   );
+			   it,
+			   resume_idx);
 
 	}
 	zconf.generator = it->cycle.generator;
@@ -106,6 +98,15 @@ uint32_t iterator_get_tried_sent(iterator_t *it)
 		sent += it->thread_shards[i].state.tried_sent;
 	}
 	return sent;
+}
+
+uint32_t iterator_get_packets_sent(iterator_t *it)
+{
+    uint32_t sent = 0;
+    for (uint8_t i = 0; i < it->num_threads; ++i) {
+        sent += it->thread_shards[i].state.p_sent;
+    }
+    return sent;
 }
 
 uint32_t iterator_get_fail(iterator_t *it)

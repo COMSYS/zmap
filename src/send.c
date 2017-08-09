@@ -34,6 +34,9 @@
 #include "shard.h"
 #include "state.h"
 #include "validate.h"
+#include "send.h"
+#include "recv.h"
+#include "xalloc.h"
 
 // OS specific functions called by send_run
 static inline int send_packet(sock_t sock, void *buf, int len, uint32_t idx);
@@ -85,7 +88,7 @@ iterator_t* send_init(void)
 {
 	// generate a new primitive root and starting position
 	iterator_t *it;
-	it = iterator_init(zconf.senders, zconf.shard_num, zconf.total_shards);
+	it = iterator_init(zconf.senders, zconf.shard_num, zconf.total_shards, zconf.resume_idx);
 	// process the dotted-notation addresses passed to ZMAP and determine
 	// the source addresses from which we'll send packets;
 	srcip_first = inet_addr(zconf.source_ip_first);
@@ -192,10 +195,12 @@ static inline ipaddr_n_t get_src_ip(ipaddr_n_t dst, int local_offset)
 }
 
 // one sender thread
-int send_run(sock_t st, shard_t *s)
+int send_run(sock_t st, shard_t *s, send_arg_t* thread_args)
 {
 	log_debug("send", "send thread started");
 	pthread_mutex_lock(&send_mutex);
+	int finished = 0;
+	
 	// Allocate a buffer to hold the outgoing packet
 	char buf[MAX_PACKET_SIZE];
 	memset(buf, 0, MAX_PACKET_SIZE);
@@ -271,6 +276,26 @@ int send_run(sock_t st, shard_t *s)
 			}
 		}
 	}
+    static int resumed = 0;
+    if (zconf.resume_idx > 0 && !resumed) {
+        log_info("send", "Will resume from given IP address ");
+
+        uint32_t num_forwarded = 0;
+        while (zconf.resume_ip != curr) {
+            curr = shard_get_next_ip(s);
+            s->state.tried_sent++;
+            num_forwarded++;
+            if (!curr) {
+                log_debug("send", "never made it to send loop in send thread %i", s->id);
+                s->cb(s->id, s->arg);
+                goto cleanup;
+            }
+        }
+        log_fatal("send", "Skipped %f%% of the address space", num_forwarded/(float)(s->state.max_targets) * 100);
+        
+        resumed = 1;
+    }
+    
 	int attempts = zconf.num_retries + 1;
 	uint32_t idx = 0;
 	while (1) {
@@ -302,14 +327,94 @@ int send_run(sock_t st, shard_t *s)
 			    }
             }
 		}
+		
+
+		
+		if(zconf.probe_module->state_aware) {
+			// ok we have state.. so there might be something in the ring
+			uint8_t* data = NULL;
+
+			ringbuffer_lock(thread_args->ring);
+			uint32_t data_len = ringbuffer_pop(thread_args->ring, &data);
+			
+			// if there is an element
+			if (data_len > 0) {
+
+				int any_sends_successful = 0;
+	//			log_debug("send", "trying to send %u bytes from ringbuffer", data_len);
+				//zconf.probe_module->print_packet(stdout, data);
+				for (int i = 0; i < attempts; ++i) {
+					int rc = send_packet(st, data, data_len, idx);
+					// if failed ->
+					if (rc < 0) {
+						struct in_addr addr;
+						addr.s_addr = curr;
+						log_debug("send", "send_packet (ringbuffer) failed for %s. %s %d",
+								  inet_ntoa(addr), strerror(errno), data_len);
+						zconf.probe_module->print_packet(stdout, data);
+					}else {
+						any_sends_successful = 1;
+						break;
+					}
+				}
+				if (!any_sends_successful) {
+					s->state.failures++;
+				}else {
+					s->state.p_sent++;
+				}
+				ringbuffer_unlock(thread_args->ring);
+				if (zsend.complete) {
+					zsend.finish = now();
+				}
+				continue;
+			}else {
+				// is there still something in the buffer?
+				// check buffer fill level, prefer emptying over new packets
+				if(ringbuffer_fill_level(thread_args->ring) >= 0.2) {
+					ringbuffer_unlock(thread_args->ring);
+					continue;
+				}
+				ringbuffer_unlock(thread_args->ring);
+			}
+		}
+	
+		
+		__attribute__((unused))float pcap_fill_level = (zrecv.pcap_recv - zrecv.pcap_drop - zrecv.packet_counter)/(float)(PCAP_BUFFER_SIZE/zconf.probe_module->pcap_snaplen);
+		
+		// if the pcap buffer is more than 1/3 full... make sure to not send more new connection attemps
+		///if (pcap_fill_level > 0.8) {
+			//usleep(1000);
+	//		continue;
+	//	}
+		
+		
 		if (zrecv.complete) {
-			s->cb(s->id, s->arg);
+			s->cb(s->id, s->arg)
+			;log_trace("send", "send thread done as receive is done");
 			break;
 		}
 		if (s->state.sent >= max_targets) {
-			s->cb(s->id, s->arg);
-			log_debug("send", "send thread %hhu finished (max targets of %u reached)", s->id, max_targets);
-			break;
+			if(!zconf.probe_module->state_aware) {
+				s->cb(s->id, s->arg);
+				log_trace("send", "send thread %hhu finished (max targets of %u reached)", s->id, max_targets);
+				break;
+			}else {
+				if(!finished) {
+					s->cb(s->id, s->arg);
+					log_trace("send", "send thread %hhu finished (max targets of %u reached)", s->id, max_targets);
+					finished = 1;
+					continue;
+				}
+				else  {
+					if((now()-zsend.finish > zconf.cooldown_secs)) {
+						log_trace("send", "breaking send thread due to over cooldown 1");
+						break;
+					}
+					else {
+						continue;
+					}
+				}
+			}
 		}
 		// estimate a random sample for a provided list of IPs to scan
 		if (zconf.list_of_ips_filename && s->state.tried_sent >= max_targets) {
@@ -319,13 +424,38 @@ int send_run(sock_t st, shard_t *s)
 		}
 		if (zconf.max_runtime && zconf.max_runtime <= now() - zsend.start) {
 			s->cb(s->id, s->arg);
+			log_trace("send", "breaking send thread due to overtime");
 			break;
 		}
+		
+		// we could have no more IPs to scan, but we might still receive packets
 		if (curr == 0) {
-			s->cb(s->id, s->arg);
-			log_debug("send", "send thread %hhu finished, shard depleted", s->id);
-			break;
+			// dont end if we are state aware until all active connections are closed
+			if(!zconf.probe_module->state_aware) {
+				s->cb(s->id, s->arg);
+				log_trace("send", "send thread %hhu finished, shard depleted", s->id);
+				break;
+			} else {
+				if(!finished) {
+					s->cb(s->id, s->arg);
+					log_trace("send", "send thread %hhu finished, shard depleted(wait)", s->id);
+					if (zsend.complete) {
+						finished = 1;
+					}
+					continue;
+				}
+				else  {
+					if((now()-zsend.finish > zconf.cooldown_secs)) {
+						log_trace("send", "breaking send thread due to over cooldown 2 %d", zconf.cooldown_secs);
+						break;
+					}
+					else {
+						continue;
+					}
+				}
+			}
 		}
+		
 		for (int i=0; i < zconf.packet_streams; i++) {
 			count++;
 			uint32_t src_ip = get_src_ip(curr, i);
@@ -333,7 +463,7 @@ int send_run(sock_t st, shard_t *s)
 			validate_gen(src_ip, curr, (uint8_t *)validation);
 			size_t length = zconf.probe_module->packet_length;
 			zconf.probe_module->make_packet(buf, &length, src_ip, curr,
-					validation, i, probe_data);
+					&validation[0], i, probe_data);
 			if (length > MAX_PACKET_SIZE) {
 				log_fatal("send", "send thread %hhu set length (%zu) larger than MAX (%zu)",
 						s->id, length, MAX_PACKET_SIZE);
@@ -360,6 +490,11 @@ int send_run(sock_t st, shard_t *s)
 						any_sends_successful = 1;
 						break;
 					}
+				}
+				if (!any_sends_successful) {
+					s->state.failures++;
+				}else {
+					s->state.p_sent++;
 				}
 				if (!any_sends_successful) {
 					s->state.failures++;

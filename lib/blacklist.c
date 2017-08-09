@@ -261,7 +261,9 @@ int blacklist_init(char *whitelist_filename, char *blacklist_filename,
 				blacklist_entries_len, ADDR_DISALLOWED,
 				ignore_invalid_hosts);
 	}
-	init_from_string(strdup("0.0.0.0"), ADDR_DISALLOWED);
+	char* x = strdup("0.0.0.0");
+	init_from_string(x, ADDR_DISALLOWED);
+	free(x);
 	constraint_paint_value(constraint, ADDR_ALLOWED);
 	uint64_t allowed = blacklist_count_allowed();
 	log_debug("constraint", "%lu addresses (%0.0f%% of address "
@@ -277,5 +279,10 @@ int blacklist_init(char *whitelist_filename, char *blacklist_filename,
 		return EXIT_FAILURE;
 	}
 	return EXIT_SUCCESS;
+}
+
+void blacklist_release() {
+	assert(constraint);
+	constraint_free(constraint);
 }
 

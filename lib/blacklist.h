@@ -25,6 +25,8 @@ int blacklist_init(char *whitelist, char *blacklist,
 		size_t blacklist_entries_len,
         int ignore_invalid_hosts);
 
+void blacklist_release();
+
 uint64_t blacklist_count_allowed();
 
 uint64_t blacklist_count_not_allowed();

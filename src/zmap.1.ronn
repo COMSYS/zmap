@@ -162,6 +162,9 @@ fields, and write filters over the output fields.
    * `-v`, `--verbosity=n`:
      Level of log detail (0-5, default=3)
 
+   * `-m`, `--metadata-file=filename`:
+     Output file for scan metadata (JSON)
+
    * `-l`, `--log-file=filename`:
 	 Output file for log messages. By default, stderr.
 
