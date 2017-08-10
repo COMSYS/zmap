@@ -535,7 +535,7 @@ int tcp_http10_initcwnd_process_packet(const u_char *packet,
             if(tcp->th_flags & TH_SYN && tcp->th_flags & TH_ACK) {
                 int probe_num_plus1 = check_dst_port(ntohs(tcp->th_dport), num_ports, validation);
                 if (!probe_num_plus1) {
-                    log_error("iwhttp", "invalid probe_num validation in SYNACK");
+                    //log_error("iwhttp", "invalid probe_num validation in SYNACK");
                     return initcwnd_process_unknown_packet(packet, tcp, ring, fs);
                 }
 

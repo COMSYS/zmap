@@ -686,6 +686,7 @@ int initcwnd_process_known_connection(const u_char* packet, uint32_t src_ip, str
             // otherwise, or redirect failed -> save data
             fs_add_string(fs, "classification", (char*)"FIN DATA", 0);
             fs_add_uint64(fs, "success", 0);
+            
             if (ptr->info != NULL && (ptr->state & STATE_LOCATION) == 0) {
                 struct initcwnd_Data* payload_ptr = (struct initcwnd_Data*)ptr->info;
                 fs_add_uint64(fs, "packets", payload_ptr->packets);
@@ -700,6 +701,7 @@ int initcwnd_process_known_connection(const u_char* packet, uint32_t src_ip, str
             }
             
             fs_add_uint64(fs, "probe_num", ptr->probe_num / mss_retries);
+            fs_add_uint64(fs, "rep_mss", ptr->estimated_mss);
             fs_add_uint64(fs, "req_mss", mss_buf[ptr->probe_num % mss_retries]);
             
             uint8_t* data = NULL;

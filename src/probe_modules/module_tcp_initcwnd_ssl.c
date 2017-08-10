@@ -223,7 +223,7 @@ int tcp_initcwnd_ssl_process_packet(const u_char *packet,
 			if(tcp->th_flags & TH_SYN && tcp->th_flags & TH_ACK) { // SYN ACK
                 int probe_num_plus1 = check_dst_port(ntohs(tcp->th_dport), num_ports, validation);
                 if (!probe_num_plus1) {
-                    log_error("iwssl", "invalid probe_num validation in SYNACK");
+                    //log_error("iwssl", "invalid probe_num validation in SYNACK");
                     return initcwnd_process_unknown_packet(packet, tcp, ring, fs);
                 }
 
