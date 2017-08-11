@@ -215,7 +215,11 @@ int tcp_http10_initcwnd_redirect(const u_char* packet, uint32_t src_ip, uint32_t
 					tcp->th_flags = TH_SYN;
 					tcp->th_ack = 0;
 					
-					tcp->th_sport = htons(dport+1);
+                    dport++;
+                    if(dport == 0)
+                        dport = zconf.source_port_first;
+                    
+					tcp->th_sport = htons(dport);
 					tcp->th_dport = htons(zconf.target_port);
 					
 					tcp->th_off = 6; // 5+1 = 4 bytes more for options
@@ -315,7 +319,14 @@ int tcp_http10_initcwnd_redirect(const u_char* packet, uint32_t src_ip, uint32_t
 		tcp->th_seq = htonl(new_seqn);  // some sqn
 		tcp->th_flags = TH_SYN;
 		tcp->th_ack = 0;
-		tcp->th_sport = htons(dport+1);
+        
+        
+        
+        dport++;
+        if (dport == 0)
+            dport = zconf.source_port_first;
+        
+		tcp->th_sport = htons(dport);
 		tcp->th_dport = htons(zconf.target_port);
         
 		

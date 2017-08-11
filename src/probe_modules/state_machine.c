@@ -3,6 +3,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <assert.h>
+#include <stdbool.h>
 
 #include "state_machine.h"
 #include "logger.h"
@@ -211,7 +212,7 @@ void destroy_StateTable(struct StateTable* myTable) {
 struct StateData* insert_StateData(uint32_t server_ip, uint16_t local_port ,struct StateTable* myTable) {
     if(myTable == NULL || server_ip == 0 || local_port == 0) {
         log_trace("state_machine","Incorrect input");
-        return NULL;
+        assert(false && "Some idiot made wrong assumptions about serverip or local_port");
     }
     else {
         uint32_t myHash = get_HashValue(server_ip, local_port, myTable->mask);
@@ -222,7 +223,7 @@ struct StateData* insert_StateData(uint32_t server_ip, uint16_t local_port ,stru
 			myTable->active++;
 			return ptr;
 		}else {
-            return NULL;
+            assert(false && "Someone made a mistake with the hash");
         }
     }
 }
