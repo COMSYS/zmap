@@ -537,7 +537,7 @@ int initcwnd_process_known_connection(const u_char* packet, uint32_t src_ip, str
                             ip_hdrs->ip_sum = 0;
                             ip_hdrs->ip_sum = zmap_ip_checksum((unsigned short*)ip_hdrs);
                             ringbuffer_commit(ring, this_len);
-                            ptr->state = STATE_ACKCHECK;
+                            ptr->state |= STATE_ACKCHECK;
                         }
 
                         ringbuffer_unlock(ring);

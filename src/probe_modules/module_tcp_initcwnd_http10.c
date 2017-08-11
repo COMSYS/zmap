@@ -55,6 +55,7 @@ int tcp_http10_initcwnd_redirect(const u_char* packet, uint32_t src_ip, uint32_t
 //	log_debug("iw", "Should redirect");
 	pthread_mutex_lock(&statetable_lock);
 	struct StateData* struct_ptr = get_StateData(src_ip, dport, myStateTable);
+    //printf("%d, %d, %p\n", src_ip, dport, (void*)struct_ptr);
 	if (struct_ptr != NULL) {
 		struct_ptr->lastActive = now();
 	}
@@ -242,6 +243,7 @@ int tcp_http10_initcwnd_redirect(const u_char* packet, uint32_t src_ip, uint32_t
 					pthread_mutex_lock(&myptr->state_lock);
 					
 					if(myptr != NULL) {
+                        //printf("Chaing to STATE_LOCATION FOR %p\n", (void*)myptr);
 						myptr->state |= STATE_LOCATION;
 						myptr->info = location;
                         myptr->probe_num = probe_num;
@@ -258,12 +260,15 @@ int tcp_http10_initcwnd_redirect(const u_char* packet, uint32_t src_ip, uint32_t
 		}else {
 			//	log_debug("iw", "State has no data");
 		}
-	}
+    }else {
+        //printf("State was already redirected\n");
+    }
 	// be stupid and try a real long request... somethimes NOT FOUND /DASDASD will be returned
 	// Reset the current connection
 	//	string_find = strstr(data_ptr->buffer, "Server: AkamaiGHost");
 	
 	if((struct_ptr->state & (STATE_LOCATION_LONG)) == 0) {
+        // printf("In location long %d\n", struct_ptr->state);
 		uint8_t* data = NULL;
 		uint32_t len;
 		ringbuffer_lock(ring);
@@ -338,7 +343,9 @@ int tcp_http10_initcwnd_redirect(const u_char* packet, uint32_t src_ip, uint32_t
 		
 		if(myptr != NULL) {
 			pthread_mutex_lock(&myptr->state_lock);
+            
 			myptr->state |= STATE_LOCATION_LONG;
+            //printf("Should not get intfo state long again with %p, state is %d\n", (void*)myptr, myptr->state);
             myptr->probe_num = probe_num;
 			if(myptr->info != NULL) {
 				free(myptr->info);
@@ -361,7 +368,9 @@ int tcp_http10_initcwnd_redirect(const u_char* packet, uint32_t src_ip, uint32_t
 		}
 		//log_debug("initcwnd", location);
 		return EXIT_SUCCESS;
-	}
+    }else {
+        //printf("Was already in state location long\n");
+    }
 	return EXIT_FAILURE;
 }
 
