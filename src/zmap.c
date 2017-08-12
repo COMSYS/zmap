@@ -175,7 +175,7 @@ static void start_zmap(void)
 			u_char buf[MAX_PACKET_SIZE];
 			uint32_t size = zconf.probe_module->thread_initialize(buf, zconf.hw_mac, zconf.gw_mac, zconf.target_port, NULL);
 			//MAX(zconf.rate/zconf.receivers, 1 << 10)
-			ringbuffer_create(&ring[i], 40000, zconf.probe_module->ringbuffer_packet_len, buf, size);
+			ringbuffer_create(&ring[i], 400000, zconf.probe_module->ringbuffer_packet_len, buf, size);
 		}
 		all_rings = ring;
     //}

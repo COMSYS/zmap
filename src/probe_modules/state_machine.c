@@ -236,6 +236,8 @@ void remove_StateData(uint32_t server_ip, uint16_t local_port,struct StateTable*
     if(myHash < myTable->length) {
 		struct StateList* tbl = &myTable->data[myHash];
 		struct ListElem* cur = tbl->head;
+        
+
 		while(cur != NULL) {
 			if(cur->data->ip == server_ip && cur->data->port == local_port) {
 				if(cur->prev != NULL) {
@@ -289,6 +291,14 @@ while (1) {
 		pthread_mutex_lock(&statetable_lock);
 		time_t curTime = now();
 		struct ListElem* cur = tbl->head;
+        
+        if (tbl->head != NULL)
+            assert(tbl->head->prev == NULL && "Head pointer's prev pointer does not point to zero");
+        
+        if (tbl->tail != NULL)
+            assert(tbl->tail->next == NULL && "Tail pointer's next pointer does not point to zero");
+        
+        
 		while(cur != NULL) {
 			
 			if(cur->data->lastActive < curTime - myTable->timeout){
